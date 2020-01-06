@@ -19,7 +19,7 @@ def createParticles(particleNum, imageDims):
 # opticFlows -- array of optic flows of all the frames so far (the last one is the most current one)
 # L -- number of previous frames to look at when determining the average optical flow
 # tau -- relaxing parameter (see: social force equation)
-def calcInteractionForces(opticFlows, L, tau=0.5):
+def calcInteractionForces(opticFlows, L, tau=0.75):
 
     # Calculate the social force (approximated as subtraction between the optic flow of the current and previous frame)
     socialForce = opticFlows[-1] - opticFlows[-2]
@@ -127,10 +127,10 @@ def particleHiveAlgorithm(particles, opticFlows, L, iterNum=100, inertia=0.2, C1
 # particles -- particles
 # forces -- interaction forces
 # R -- number of iterations (the paper has it at 1000, but the algorithm runs too slow)
-def RANSAC(particles, forces, R=5):
+def RANSAC(particles, forces, R=1):
 
     helpForce = np.copy(forces)
-    samplSize = len(helpForce)//3
+    samplSize = len(helpForce)
     outlierNum = len(helpForce)
     ret = []
 
@@ -149,15 +149,111 @@ def RANSAC(particles, forces, R=5):
 
     return zip(*ret)
 
+# Method used to get the average sum of interaction force outliers per frame using a video clip without anomalies
+# More or less the same skeleton as the actual anomaly detection algorithm in terms of frame analysis and such
+# folderName -- path to the folder containing the .tif frames
+# extension -- extension frame images have
+# particleNum -- number of particles to use
+# L -- number of frames used for determining the average optical flow
+def getAvgInteractionForceSum(folderName, extension, particleNum, L):
+
+    # INITIAL PREPARATION
+
+    # Used to keep track of all the sums of outlier forces on frames
+    totalForces = []
+
+    # A list of all previous optic flow vectors calculated in all the frames
+    opticFlows = []
+
+    # Prepare full file path
+    foldPath = folderName + '/'
+    i = 1
+    prefix = '00'
+
+    # Complete path to the very first frame
+    file = foldPath + prefix + str(i) + extension
+
+    # Load the first frame
+    # The images themselves are already in greyscale, but because OpenCV can't figure
+    # it out on its own, we need to manually set every frame to greyscale to make
+    # sure the optical flow will be calculated correctly later down the line
+    prev = cv2.imread(file)
+    prev = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
+
+    # Prepare to start at the next frame
+    i += 1
+    file = foldPath + prefix + str(i) + extension
+
+    # Create particles
+    particles = createParticles(particleNum, prev.shape)
+
+    # BEGINNING OF THE ALGORITHM
+
+    print("Learning average interaction force for a frame without anomalies...")
+
+    # Repeat as long as there are frames:
+    while os.path.isfile(file):
+
+        # Load next frame
+        frame = cv2.imread(file)
+        framegray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        # Calculate optic flow (dense), using the previous and current frame
+        # Returns an M x N array of 2D vectors (where M x N are dimensions of the image)
+        # In other words, we've determined the optical flow for every pixel on the image
+        flow = cv2.calcOpticalFlowFarneback(prev, framegray, None, 0.5, 4, 15, 3, 5, 1.2, 0)
+
+        # Add the calculated optic flow to the list of optic flows
+        opticFlows.append(flow)
+
+        if i > 3:
+            # Calculate the interaction forces for all the particles
+            particles, forces = particleHiveAlgorithm(particles, opticFlows, L)
+
+            # Determine the particles that have interaction force values over 3 sigma by making a Gauss approximation
+            outlierparticles, outlierforces = RANSAC(particles, forces)
+
+            # Remember the sum of outlier forces for that frame
+            totalForces.append(np.sum(list(outlierforces)))
+
+        # Show frame
+        cv2.imshow('Frame', frame)
+
+        # Stop the algorithm with the 'q' key
+        if cv2.waitKey(25) & 0xFF == ord('q'):
+            break
+
+        # Prepare the prefix for the next file (in this dataset, no sample has over 1000 frames)
+        i += 1
+        if 10 <= i < 100:
+            prefix = '0'
+        elif i >= 100:
+            prefix = ''
+
+        # Prepare path for next frame, set the current frame to be the previous one
+        file = foldPath + prefix + str(i) + extension
+        prev = framegray
+
+    print("Done!")
+    # Return the average outlier sum
+    return np.sum(totalForces) / len(totalForces)
+
 
 # Anomaly detection function
 # folderName -- path to the folder containing the .tif frames
 # extension -- extension frame images have
 # particleNum -- number of particles to use
 # L -- number of frames used for determining the average optical flow
-def anomalyDetect(folderName, extension, particleNum, L):
+# useExistingRef -- flag to determine whether or not the user will be using a pre-set outlier sum as reference
+# refF -- the value of the interaction force outlier sum
+# refScale -- how much the interaction force outlier sum of a frame needs to go over the reference sum to be considered
+# an anomaly
+def anomalyDetect(folderName, extension, particleNum, L, useExistingRef=False, refF=None, refScale=1.1):
 
     # INITIAL PREPARATION
+
+    print()
+    print("Preparing for " + str(folderName))
 
     # A list of all previous optic flow vectors calculated in all the frames
     opticFlows = []
@@ -201,11 +297,29 @@ def anomalyDetect(folderName, extension, particleNum, L):
         # Add the calculated optic flow to the list of optic flows
         opticFlows.append(flow)
 
-        if i > 2:
+        if i > L:
+
+            # Calculate the interaction forces for all particles
             particles, forces = particleHiveAlgorithm(particles, opticFlows, L)
-            outlierparticles, outlierforces = RANSAC(particles, forces)
+
+            # Determine the particles that have interaction force values over 3 sigma by making a Gauss approximation
+            outlierparticles, outlierforces = RANSAC(particles, forces, R=1)
             outlierparticles = list(outlierparticles)
 
+            # If the user has not given an input on what the reference sum should be, take the L+1st frame as
+            # the reference point
+            # YOU SHOULD DEFINITELY NOT DO THIS
+            if i == L+1 and useExistingRef==False:
+                refF = np.sum(list(outlierforces))
+                print(refF)
+
+            # Either way, determine if a frame has an anomaly by summing up the outlier interaction force values and
+            # seeing if they go over the reference sum
+            else:
+                if np.abs(np.sum(list(outlierforces))) > refScale*refF:
+                    print("Frame " + str(i) + ": Anomaly detected! Interaction force sum: " + str(np.sum(list(outlierforces))))
+
+            # Draw the outlier particles
             for k in range(np.size(outlierparticles, 0)):
                 frame[outlierparticles[k][0], outlierparticles[k][1]] = [0,0,255]
 
@@ -228,4 +342,22 @@ def anomalyDetect(folderName, extension, particleNum, L):
         prev = framegray
 
 
-anomalyDetect('Test001', '.tif',  20000, 10)
+# Tests
+# UCSD Ped 2
+L = 12
+refForce = getAvgInteractionForceSum('UCSDped2/Train/Train001', '.tif', 40000, L)
+anomalyDetect('UCSDped2/Train/Train002', '.tif',  40000, L, True, refForce, 1.15) # This is a test to see the amount of potential false positives. Ideally, algorithm should not be detecting anomalies. (But it probably will.)
+anomalyDetect('UCSDped2/Test/Test001', '.tif',  40000, L, True, refForce, 1.15)
+anomalyDetect('UCSDped2/Test/Test002', '.tif',  40000, L, True, refForce, 1.15)
+anomalyDetect('UCSDped2/Test/Test003', '.tif',  40000, L, True, refForce, 1.15)
+
+# UCSD Ped 1
+L = 10
+refForce = getAvgInteractionForceSum('UCSDped1/Train/Train001', '.tif', 40000, L)
+anomalyDetect('UCSDped1/Test/Test001', '.tif',  40000, L, True, refForce)
+anomalyDetect('UCSDped1/Test/Test002', '.tif',  40000, L, True, refForce)
+anomalyDetect('UCSDped1/Test/Test003', '.tif',  40000, L, True, refForce)
+anomalyDetect('UCSDped1/Test/Test004', '.tif',  40000, L, True, refForce)
+anomalyDetect('UCSDped1/Test/Test014', '.tif',  40000, L, True, refForce)
+anomalyDetect('UCSDped1/Test/Test008', '.tif',  40000, L, True, refForce)
+anomalyDetect('UCSDped1/Test/Test019', '.tif',  40000, L, True, refForce)
