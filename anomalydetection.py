@@ -19,7 +19,7 @@ def createParticles(particleNum, imageDims):
 # opticFlows -- array of optic flows of all the frames so far (the last one is the most current one)
 # L -- number of previous frames to look at when determining the average optical flow
 # tau -- relaxing parameter (see: social force equation)
-def calcInteractionForces(opticFlows, L, tau=0.75):
+def calcInteractionForces(opticFlows, L, tau=0.5):
 
     # Calculate the social force (approximated as subtraction between the optic flow of the current and previous frame)
     socialForce = opticFlows[-1] - opticFlows[-2]
@@ -344,12 +344,12 @@ def anomalyDetect(folderName, extension, particleNum, L, useExistingRef=False, r
 
 # Tests
 # UCSD Ped 2
-L = 12
-refForce = getAvgInteractionForceSum('UCSDped2/Train/Train001', '.tif', 40000, L)
-anomalyDetect('UCSDped2/Train/Train002', '.tif',  40000, L, True, refForce, 1.15) # This is a test to see the amount of potential false positives. Ideally, algorithm should not be detecting anomalies. (But it probably will.)
-anomalyDetect('UCSDped2/Test/Test001', '.tif',  40000, L, True, refForce, 1.15)
-anomalyDetect('UCSDped2/Test/Test002', '.tif',  40000, L, True, refForce, 1.15)
-anomalyDetect('UCSDped2/Test/Test003', '.tif',  40000, L, True, refForce, 1.15)
+L = 11
+refForce = getAvgInteractionForceSum('UCSDped2/Train/Train002', '.tif', 40000, L)
+anomalyDetect('UCSDped2/Train/Train003', '.tif',  40000, L, True, refForce, 1.1) # This is a test to see the amount of potential false positives. Ideally, algorithm should not be detecting anomalies. (But it probably will.)
+anomalyDetect('UCSDped2/Test/Test001', '.tif',  40000, L, True, refForce, 1.1)
+anomalyDetect('UCSDped2/Test/Test002', '.tif',  40000, L, True, refForce, 1.1)
+anomalyDetect('UCSDped2/Test/Test003', '.tif',  40000, L, True, refForce, 1.1)
 
 # UCSD Ped 1
 L = 10
