@@ -4,15 +4,14 @@ import os.path
 import random
 
 
-# Creates a set of particles, which contain a set of coordinates to the frame
-# particleNum -- number of particles to create
+# Creates a set of particles on a grid. Each particle contains a set of coordinates on a frame
 # imageDims -- dimensions of the image, to know the interval of the random initial positions
-def createParticles(particleNum, imageDims):
-    xCoords = np.atleast_2d(np.random.randint(imageDims[0]-1, size=particleNum))
-    yCoords = np.atleast_2d(np.random.randint(imageDims[1]-1, size=particleNum))
+def createParticles(imageDims):
 
-    particles = np.concatenate((xCoords, yCoords), axis=0)
-    return particles.T
+    xCoords = np.linspace(1, imageDims[0]-2, imageDims[0]//3).astype(int)
+    yCoords = np.linspace(1, imageDims[1]-2, imageDims[1]//3).astype(int)
+
+    return np.array(np.meshgrid(xCoords, yCoords)).T.reshape(-1, 2)
 
 
 # Calculate the magnitudes of interaction forces for given particles
@@ -58,104 +57,65 @@ def getInteractionForcesForParticles(particles, interactionForce):
     return retForces
 
 
-# Determine the optimal position of the particles
-
-# NOT ACTUALLY IMPLEMENTED!! ONLY CALCULATES THE INTERACTION FORCES OF A FRAME AND RETURNS THE VALUES OF
-# THOSE INTERACTION FORCES FOR THE GIVEN PARTICLES!!
-
-# I DON'T KNOW HOW TO GET THIS THING TO WORK PROPERLY!!
-
+# Particle advection
+# Moves particles every L frames in the direction of the average optical flow corresponding to their current position
 # particles -- an array of particle positions
 # opticFlows -- a list of dense optical flows from previous frames
-# iterNum -- number of iterations for the hive algorithm
 # L -- number of previous frames to look at when determining the average optical flow
-# inertia -- parameter W, used for determining the balance of previous particles and new ones
-# C1, C2 -- acceleration constants
-def particleHiveAlgorithm(particles, opticFlows, L, iterNum=100, inertia=0.2, C1=0.6, C2=0.002):
+def particleAdvection(particles, opticFlows, L):
 
     # To speed up the process, we can use the dense optical flow to calculate the interaction force for any position on
     # the current frame, and then simply look at the positions as we need to during the algorithm
     interactionForces = calcInteractionForces(opticFlows, L)
 
+    if len(opticFlows) % L == 0:
+
+        avgOpt = np.sum(opticFlows[-L:], axis=0) / L
+
+        helpM = []
+
+        for p in particles:
+            helpM.append(avgOpt[p[0], p[1], 0])
+            helpM.append(avgOpt[p[0], p[1], 1])
+
+        helpM = np.array(helpM).reshape(np.size(helpM)//2, 2)
+        particles = particles.astype(float)
+        particles += helpM
+        particles = particles.astype(int)
+
+        particles = np.clip(particles, [0, 0], [np.size(opticFlows[0], axis=0)-1, np.size(opticFlows[0], axis=1)-1])
+
     return particles, getInteractionForcesForParticles(particles, interactionForces)
 
-    # print(interactionForces)
-    # personalBests = np.copy(particles)
-    # bestForces = getInteractionForcesForParticles(particles, interactionForces)
-    #
-    # # In case, for some reason, the iteration number is set to 0
-    # newForces = bestForces
-    # newParticles = particles
-    #
-    # # Parameters related to the hive algorithm
-    # globalSmallestForce = np.amax(bestForces)
-    # globalBest = particles[np.argmax(bestForces)]
-    # particleNum = np.size(particles, 0)
-    #
-    # # Preparation to begin
-    # oldParticles = particles
-    # oldVelocity = 0
-    #
-    # for i in range(iterNum):
-    #     newVelocity = inertia*oldVelocity + C1*np.random.rand(particleNum, 2)*(personalBests - oldParticles) + C2*np.random.rand(particleNum, 2)*(globalBest - oldParticles)  # Calculate new velocity
-    #     newParticles = oldParticles + newVelocity  # Move all particles for their respective new velocities
-    #     newParticles = newParticles.astype(int)  # Make all of the new particles into ints (actual usable positions)
-    #     newForces = getInteractionForcesForParticles(newParticles, interactionForces)  # Find the interaction forces on those positions
-    #     smallestForce = np.amin(newForces)  # Find the smallest force among the found forces
-    #
-    #     # Update global force if new smallest interaction force is found
-    #     if smallestForce > globalSmallestForce:
-    #         globalSmallestForce = smallestForce
-    #         globalBest = newParticles[np.argmax(newForces)]
-    #
-    #     for j in range(np.size(newParticles, 0)):
-    #         if newForces[j] > bestForces[j]:
-    #             bestForces[j] = newForces[j]
-    #             personalBests[j] = newParticles[j]
-    #
-    #     # Prepare for next iteration
-    #     oldParticles = newParticles
-    #     oldVelocity = newVelocity
 
-    # return newParticles, newForces
-
-
-# RANSAC algorithm
-# Approximates a gaussian curve based on force magnitudes by taking different samples, intending to find the one
-# with the least outliers
-# Returns all the outliers for such a curve
+# Gauss approximation
+# Approximates a gaussian curve based on force magnitudes
+# Returns all the 3-sigma outliers for such a curve
 # particles -- particles
 # forces -- interaction forces
-# R -- number of iterations (the paper has it at 1000, but the algorithm runs too slow)
-def RANSAC(particles, forces, R=1):
+def gaussApprox(particles, forces):
+
+    #return particles, forces
 
     helpForce = np.copy(forces)
     samplSize = len(helpForce)
-    outlierNum = len(helpForce)
-    ret = []
 
-    for i in range(R):
-        random.shuffle(helpForce)
+    alsoHelp = helpForce[:samplSize]
+    mean = np.sum(alsoHelp) / samplSize
+    stddev = np.sqrt(np.sum((alsoHelp - mean)**2) / (samplSize-1))
+    tobeat = mean + 3*stddev
 
-        alsoHelp = helpForce[:samplSize]
-        mean = np.sum(alsoHelp) / samplSize
-        stddev = np.sqrt(np.sum((alsoHelp - mean)**2) / (samplSize-1))
-        tobeat = mean + 3*stddev
-
-        outliers = [(p, f) for (p, f) in zip(particles, forces) if f >= tobeat]
-        if len(outliers) <= outlierNum:
-            ret = outliers
-            outlierNum = len(outliers)
+    ret = [(p, f) for (p, f) in zip(particles, forces) if f >= tobeat]
 
     return zip(*ret)
+
 
 # Method used to get the average sum of interaction force outliers per frame using a video clip without anomalies
 # More or less the same skeleton as the actual anomaly detection algorithm in terms of frame analysis and such
 # folderName -- path to the folder containing the .tif frames
 # extension -- extension frame images have
-# particleNum -- number of particles to use
 # L -- number of frames used for determining the average optical flow
-def getAvgInteractionForceSum(folderName, extension, particleNum, L):
+def getAvgInteractionForceSum(folderName, extension, L):
 
     # INITIAL PREPARATION
 
@@ -185,7 +145,7 @@ def getAvgInteractionForceSum(folderName, extension, particleNum, L):
     file = foldPath + prefix + str(i) + extension
 
     # Create particles
-    particles = createParticles(particleNum, prev.shape)
+    particles = createParticles(prev.shape)
 
     # BEGINNING OF THE ALGORITHM
 
@@ -206,12 +166,12 @@ def getAvgInteractionForceSum(folderName, extension, particleNum, L):
         # Add the calculated optic flow to the list of optic flows
         opticFlows.append(flow)
 
-        if i > 3:
+        if i > L:
             # Calculate the interaction forces for all the particles
-            particles, forces = particleHiveAlgorithm(particles, opticFlows, L)
+            particles, forces = particleAdvection(particles, opticFlows, L)
 
             # Determine the particles that have interaction force values over 3 sigma by making a Gauss approximation
-            outlierparticles, outlierforces = RANSAC(particles, forces)
+            outlierparticles, outlierforces = gaussApprox(particles, forces)
 
             # Remember the sum of outlier forces for that frame
             totalForces.append(np.sum(list(outlierforces)))
@@ -240,20 +200,24 @@ def getAvgInteractionForceSum(folderName, extension, particleNum, L):
 
 
 # Anomaly detection function
+# Returns an array containing flags for each frame -- 0 if no anomaly was found, 1 if it was
 # folderName -- path to the folder containing the .tif frames
 # extension -- extension frame images have
-# particleNum -- number of particles to use
 # L -- number of frames used for determining the average optical flow
 # useExistingRef -- flag to determine whether or not the user will be using a pre-set outlier sum as reference
 # refF -- the value of the interaction force outlier sum
 # refScale -- how much the interaction force outlier sum of a frame needs to go over the reference sum to be considered
 # an anomaly
-def anomalyDetect(folderName, extension, particleNum, L, useExistingRef=False, refF=None, refScale=1.1):
+def anomalyDetect(folderName, extension, L, useExistingRef=False, refF=None, refScale=1.1):
 
     # INITIAL PREPARATION
 
     print()
     print("Preparing for " + str(folderName))
+
+    # List of detected anomalies
+    # Each field represents a frame -- 0 means no anomaly, 1 means anomaly
+    anomalies = []
 
     # A list of all previous optic flow vectors calculated in all the frames
     opticFlows = []
@@ -278,7 +242,7 @@ def anomalyDetect(folderName, extension, particleNum, L, useExistingRef=False, r
     file = foldPath + prefix + str(i) + extension
 
     # Create particles
-    particles = createParticles(particleNum, prev.shape)
+    particles = createParticles(prev.shape)
 
     # BEGINNING OF THE ALGORITHM
 
@@ -300,10 +264,10 @@ def anomalyDetect(folderName, extension, particleNum, L, useExistingRef=False, r
         if i > L:
 
             # Calculate the interaction forces for all particles
-            particles, forces = particleHiveAlgorithm(particles, opticFlows, L)
+            particles, forces = particleAdvection(particles, opticFlows, L)
 
             # Determine the particles that have interaction force values over 3 sigma by making a Gauss approximation
-            outlierparticles, outlierforces = RANSAC(particles, forces, R=1)
+            outlierparticles, outlierforces = gaussApprox(particles, forces)
             outlierparticles = list(outlierparticles)
 
             # If the user has not given an input on what the reference sum should be, take the L+1st frame as
@@ -317,7 +281,10 @@ def anomalyDetect(folderName, extension, particleNum, L, useExistingRef=False, r
             # seeing if they go over the reference sum
             else:
                 if np.abs(np.sum(list(outlierforces))) > refScale*refF:
+                    anomalies.append(1)
                     print("Frame " + str(i) + ": Anomaly detected! Interaction force sum: " + str(np.sum(list(outlierforces))))
+                else:
+                    anomalies.append(0)
 
             # Draw the outlier particles
             for k in range(np.size(outlierparticles, 0)):
@@ -341,23 +308,20 @@ def anomalyDetect(folderName, extension, particleNum, L, useExistingRef=False, r
         file = foldPath + prefix + str(i) + extension
         prev = framegray
 
+    return np.array(anomalies)
 
-# Tests
-# UCSD Ped 2
-L = 11
-refForce = getAvgInteractionForceSum('UCSDped2/Train/Train002', '.tif', 40000, L)
-anomalyDetect('UCSDped2/Train/Train003', '.tif',  40000, L, True, refForce, 1.1) # This is a test to see the amount of potential false positives. Ideally, algorithm should not be detecting anomalies. (But it probably will.)
-anomalyDetect('UCSDped2/Test/Test001', '.tif',  40000, L, True, refForce, 1.1)
-anomalyDetect('UCSDped2/Test/Test002', '.tif',  40000, L, True, refForce, 1.1)
-anomalyDetect('UCSDped2/Test/Test003', '.tif',  40000, L, True, refForce, 1.1)
 
-# UCSD Ped 1
-L = 10
-refForce = getAvgInteractionForceSum('UCSDped1/Train/Train001', '.tif', 40000, L)
-anomalyDetect('UCSDped1/Test/Test001', '.tif',  40000, L, True, refForce)
-anomalyDetect('UCSDped1/Test/Test002', '.tif',  40000, L, True, refForce)
-anomalyDetect('UCSDped1/Test/Test003', '.tif',  40000, L, True, refForce)
-anomalyDetect('UCSDped1/Test/Test004', '.tif',  40000, L, True, refForce)
-anomalyDetect('UCSDped1/Test/Test014', '.tif',  40000, L, True, refForce)
-anomalyDetect('UCSDped1/Test/Test008', '.tif',  40000, L, True, refForce)
-anomalyDetect('UCSDped1/Test/Test019', '.tif',  40000, L, True, refForce)
+if __name__ == '__main__':
+    # Tests
+    # UCSD Ped 2
+    L = 12
+    refForce = getAvgInteractionForceSum('UCSDped2/Train/Train002', '.tif', L)
+    anomalyDetect('UCSDped2/Test/Test006', '.tif',  L, True, refForce, 1.1)
+    anomalyDetect('UCSDped2/Test/Test002', '.tif',  L, True, refForce, 1.1)
+    anomalyDetect('UCSDped2/Test/Test008', '.tif',  L, True, refForce, 1.1)
+
+    # UCSD Ped 1
+    L = 10
+    refForce = getAvgInteractionForceSum('UCSDped1/Train/Train001', '.tif', L)
+    anomalyDetect('UCSDped1/Test/Test032', '.tif',  L, True, refForce)
+    anomalyDetect('UCSDped1/Test/Test002', '.tif',  L, True, refForce)
