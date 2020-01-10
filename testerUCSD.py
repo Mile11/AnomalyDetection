@@ -54,7 +54,7 @@ if __name__ == '__main__':
 
     for b, t, L in zip(bases, totrain, Ls):
 
-        refForce = getAvgInteractionForceSum(b + '/Train/' + t, '.tif', L)
+        refForce = getAvgInteractionForceSum(b + '/Train/' + t + '/', '.tif', L)
 
         totalFrameNum = 0
         totalErrors = 0
@@ -76,7 +76,7 @@ if __name__ == '__main__':
                 s1 = file + suff + str(i)
                 continue
 
-            anomalies = anomalyDetect(s1, '.tif',  L, True, refForce)
+            anomalies = anomalyDetect(s1 + '/', '.tif',  L, True, refForce)
             gt, frameNum = groundTruthAnalysis(s1 + '_gt', '.bmp')
 
             differences = np.bitwise_xor(anomalies, gt[L:])
@@ -108,7 +108,7 @@ if __name__ == '__main__':
 
         while os.path.isdir(s1):
 
-            anomalies = anomalyDetect(s1, '.tif', L, True, refForce)
+            anomalies = anomalyDetect(s1 + '/', '.tif', L, True, refForce)
 
             frameNum = np.size(anomalies)
             totalFrameNum += frameNum - L

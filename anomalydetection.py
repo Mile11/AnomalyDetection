@@ -62,11 +62,11 @@ def getInteractionForcesForParticles(particles, interactionForce):
 # particles -- an array of particle positions
 # opticFlows -- a list of dense optical flows from previous frames
 # L -- number of previous frames to look at when determining the average optical flow
-def particleAdvection(particles, opticFlows, L):
+def particleAdvection(particles, opticFlows, L, tau=0.5):
 
     # To speed up the process, we can use the dense optical flow to calculate the interaction force for any position on
     # the current frame, and then simply look at the positions as we need to during the algorithm
-    interactionForces = calcInteractionForces(opticFlows, L)
+    interactionForces = calcInteractionForces(opticFlows, L, tau=tau)
 
     if len(opticFlows) % L == 0:
 
@@ -95,8 +95,6 @@ def particleAdvection(particles, opticFlows, L):
 # forces -- interaction forces
 def gaussApprox(particles, forces):
 
-    #return particles, forces
-
     helpForce = np.copy(forces)
     samplSize = len(helpForce)
 
@@ -111,11 +109,17 @@ def gaussApprox(particles, forces):
 
 
 # Method used to get the average sum of interaction force outliers per frame using a video clip without anomalies
-# More or less the same skeleton as the actual anomaly detection algorithm in terms of frame analysis and such
-# folderName -- path to the folder containing the .tif frames
-# extension -- extension frame images have
+# More or less the same skeleton as the actual anomaly detection algorithm (in terms of frame analysis and such)
+# foldPath -- if the user is inputting the frames as image files, this should be the path to the folder containing the files.
+# if the user is loading a video file, this should be the path to the video file (extension must be included)
+# extension -- extension frame images have; not used in the case of a video file
 # L -- number of frames used for determining the average optical flow
-def getAvgInteractionForceSum(folderName, extension, L):
+# frameDigits -- the algorithm assumes that, if the frames are stored as seperate files, that they all end with
+# a N digit number (where the number of digits remains constant. for example, if N = 4, the first frame would be
+# labeled as '0001' and so on)
+# vidFile -- flag to check if the file given is a video file
+# tau -- relaxation constant used for social force model; advised to be in an interval of [0.5, 0.85]
+def getAvgInteractionForceSum(foldPath, extension='', L=10, frameDigits=3, vidFile=False, tau=0.5):
 
     # INITIAL PREPARATION
 
@@ -126,18 +130,26 @@ def getAvgInteractionForceSum(folderName, extension, L):
     opticFlows = []
 
     # Prepare full file path
-    foldPath = folderName + '/'
     i = 1
-    prefix = '00'
+    j = 1
+    prefix = '0' * (frameDigits-1)
 
-    # Complete path to the very first frame
+    # Complete path to the very first frame (this step will do nothing in case of a video file)
     file = foldPath + prefix + str(i) + extension
 
+    cap = None
+
     # Load the first frame
-    # The images themselves are already in greyscale, but because OpenCV can't figure
-    # it out on its own, we need to manually set every frame to greyscale to make
-    # sure the optical flow will be calculated correctly later down the line
-    prev = cv2.imread(file)
+    if not vidFile:
+        prev = cv2.imread(file)
+    else:
+        cap = cv2.VideoCapture(foldPath)
+        if not cap.isOpened():
+            print("Error opening")
+            exit(1)
+        ret, prev = cap.read()
+
+    # We need to manually set every frame to greyscale to calculate the optical flow
     prev = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
 
     # Prepare to start at the next frame
@@ -152,10 +164,16 @@ def getAvgInteractionForceSum(folderName, extension, L):
     print("Learning average interaction force for a frame without anomalies...")
 
     # Repeat as long as there are frames:
-    while os.path.isfile(file):
+    while (not vidFile and os.path.isfile(file)) or (vidFile and cap.isOpened()):
 
         # Load next frame
-        frame = cv2.imread(file)
+        if not vidFile:
+            frame = cv2.imread(file)
+        else:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
         framegray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         # Calculate optic flow (dense), using the previous and current frame
@@ -168,7 +186,7 @@ def getAvgInteractionForceSum(folderName, extension, L):
 
         if i > L:
             # Calculate the interaction forces for all the particles
-            particles, forces = particleAdvection(particles, opticFlows, L)
+            particles, forces = particleAdvection(particles, opticFlows, L, tau=tau)
 
             # Determine the particles that have interaction force values over 3 sigma by making a Gauss approximation
             outlierparticles, outlierforces = gaussApprox(particles, forces)
@@ -185,10 +203,9 @@ def getAvgInteractionForceSum(folderName, extension, L):
 
         # Prepare the prefix for the next file (in this dataset, no sample has over 1000 frames)
         i += 1
-        if 10 <= i < 100:
-            prefix = '0'
-        elif i >= 100:
-            prefix = ''
+        if i >= 10 ** j:
+            j += 1
+            prefix = '0' * (frameDigits-j)
 
         # Prepare path for next frame, set the current frame to be the previous one
         file = foldPath + prefix + str(i) + extension
@@ -201,19 +218,25 @@ def getAvgInteractionForceSum(folderName, extension, L):
 
 # Anomaly detection function
 # Returns an array containing flags for each frame -- 0 if no anomaly was found, 1 if it was
-# folderName -- path to the folder containing the .tif frames
-# extension -- extension frame images have
+# foldPath -- if the user is inputting the frames as image files, this should be the path to the folder containing the files.
+# if the user is loading a video file, this should be the path to the video file (extension must be included)
+# extension -- extension frame images have; not used in the case of a video file
 # L -- number of frames used for determining the average optical flow
 # useExistingRef -- flag to determine whether or not the user will be using a pre-set outlier sum as reference
 # refF -- the value of the interaction force outlier sum
 # refScale -- how much the interaction force outlier sum of a frame needs to go over the reference sum to be considered
 # an anomaly
-def anomalyDetect(folderName, extension, L, useExistingRef=False, refF=None, refScale=1.1):
+# frameDigits -- the algorithm assumes that, if the frames are stored as seperate files, that they all end with
+# a N digit number (where the number of digits remains constant. for example, if N = 4, the first frame would be
+# labeled as '0001' and so on)
+# vidFile -- flag to check if the file given is a video file
+# tau -- relaxation constant used for social force model; advised to be in an interval of [0.5, 0.85]
+def anomalyDetect(foldPath, extension='', L=10, useExistingRef=False, refF=None, refScale=1.1, frameDigits=3, vidFile=False, tau=0.5):
 
     # INITIAL PREPARATION
 
     print()
-    print("Preparing for " + str(folderName))
+    print("Preparing for " + str(foldPath))
 
     # List of detected anomalies
     # Each field represents a frame -- 0 means no anomaly, 1 means anomaly
@@ -223,18 +246,26 @@ def anomalyDetect(folderName, extension, L, useExistingRef=False, refF=None, ref
     opticFlows = []
 
     # Prepare full file path
-    foldPath = folderName + '/'
     i = 1
-    prefix = '00'
+    j = 1
+    prefix = '0' * (frameDigits-1)
 
     # Complete path to the very first frame
     file = foldPath + prefix + str(i) + extension
 
+    cap = None
+
     # Load the first frame
-    # The images themselves are already in greyscale, but because OpenCV can't figure
-    # it out on its own, we need to manually set every frame to greyscale to make
-    # sure the optical flow will be calculated correctly later down the line
-    prev = cv2.imread(file)
+    if not vidFile:
+        prev = cv2.imread(file)
+    else:
+        cap = cv2.VideoCapture(foldPath)
+        if not cap.isOpened():
+            print("Error opening")
+            exit(1)
+        ret, prev = cap.read()
+
+    # We need to manually set every frame to greyscale to calculate the optical flow
     prev = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
 
     # Prepare to start at the next frame
@@ -247,10 +278,16 @@ def anomalyDetect(folderName, extension, L, useExistingRef=False, refF=None, ref
     # BEGINNING OF THE ALGORITHM
 
     # Repeat as long as there are frames:
-    while os.path.isfile(file):
+    while (not vidFile and os.path.isfile(file)) or (vidFile and cap.isOpened()):
 
         # Load next frame
-        frame = cv2.imread(file)
+        if not vidFile:
+            frame = cv2.imread(file)
+        else:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
         framegray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
         # Calculate optic flow (dense), using the previous and current frame
@@ -264,7 +301,7 @@ def anomalyDetect(folderName, extension, L, useExistingRef=False, refF=None, ref
         if i > L:
 
             # Calculate the interaction forces for all particles
-            particles, forces = particleAdvection(particles, opticFlows, L)
+            particles, forces = particleAdvection(particles, opticFlows, L, tau=tau)
 
             # Determine the particles that have interaction force values over 3 sigma by making a Gauss approximation
             outlierparticles, outlierforces = gaussApprox(particles, forces)
@@ -299,10 +336,9 @@ def anomalyDetect(folderName, extension, L, useExistingRef=False, refF=None, ref
 
         # Prepare the prefix for the next file (in this dataset, no sample has over 1000 frames)
         i += 1
-        if 10 <= i < 100:
-            prefix = '0'
-        elif i >= 100:
-            prefix = ''
+        if i >= 10 ** j:
+            j += 1
+            prefix = '0' * (frameDigits-j)
 
         # Prepare path for next frame, set the current frame to be the previous one
         file = foldPath + prefix + str(i) + extension
@@ -312,16 +348,91 @@ def anomalyDetect(folderName, extension, L, useExistingRef=False, refF=None, ref
 
 
 if __name__ == '__main__':
-    # Tests
-    # UCSD Ped 2
-    L = 12
-    refForce = getAvgInteractionForceSum('UCSDped2/Train/Train002', '.tif', L)
-    anomalyDetect('UCSDped2/Test/Test006', '.tif',  L, True, refForce, 1.1)
-    anomalyDetect('UCSDped2/Test/Test002', '.tif',  L, True, refForce, 1.1)
-    anomalyDetect('UCSDped2/Test/Test008', '.tif',  L, True, refForce, 1.1)
+    # Main method used for general testing
 
-    # UCSD Ped 1
+    extension = ''
     L = 10
-    refForce = getAvgInteractionForceSum('UCSDped1/Train/Train001', '.tif', L)
-    anomalyDetect('UCSDped1/Test/Test032', '.tif',  L, True, refForce)
-    anomalyDetect('UCSDped1/Test/Test002', '.tif',  L, True, refForce)
+    useExistingRef = False
+    vidFile = False
+    refF = 0
+    tau = 0.5
+    refScale = 1.1
+    frameDigits = 3
+    filePath = ''
+
+    vidFile2 = False
+    extension1 = ''
+    frameDigits1 = 3
+    filePath1 = ''
+
+    print("Welcome to this (relatively simplistic) anomaly detection algorithm!")
+    print("Please specify if you will be loading the video as a set of frames (images) or as an actual video file!")
+
+    inp = ''
+    while inp != 1 and inp != 2:
+        inp = int(input("Enter 1 for images, 2 for video > "))
+
+    if inp == 1:
+        print("\nYou have chosen to use images as frames!")
+        print("Please specify the path to the folder which contains the desired images.")
+        print("WARNING: Image frame file names MUST be properly ennumered and represented with an N-digit counter. For example '001' or 'frame_001'.")
+        print("In the case of the former (where it's a simple counter), please make sure to add a '\\' at the end of the folder path.")
+        print("For example, if the frames were labeled as 'XXX': 'UCSD/Test/Test1/'")
+        print("In the case of the latter, where there is a string of some kind preceding the counter, you must ALSO enter the part of the string.")
+        print("For example, if the frames are labeled as 'seq_XXX', you would enter the path: 'mall_dataset/frames/seq_'")
+        filePath = input("So, with all that said, please enter the folder path! > ")
+        frameDigits = int(input("Please enter the number of digits your frame counter has. (For example, in the case of '001' it would be 3!) > "))
+        extension = input("Please enter the file extension! (Don't forget the '.') > ")
+    else:
+        vidFile = True
+        print("\nYou have chosen to use a video file!")
+        filePath = input("Please enter the path to the file! > ")
+
+    tau = float(input("\nPlease set the social relaxation constant! (Tau) > "))
+    L = int(input("Please enter the amount of frames used for determining the average optical flow in calculating the interaction force! > "))
+    refScale = float(input("Please enter the scale by with the sum of interaction forces of a frame needs to be larger than the treshold! > "))
+
+    inp2 = ''
+    while inp2 != 'y' and inp2 != 'n':
+        inp2 = input("\nWould you like to submit a clip or set of image frames to determine the treshold sum of interaction forces for anomaly detection? [y/n] > ")
+
+    if inp2 == 'y':
+        useExistingRef = True
+        print("Is the example a clip or a set of images?")
+        inp = ''
+        while inp != 1 and inp != 2:
+            inp = int(input("Enter 1 for images, 2 for video > "))
+
+        if inp == 1:
+            print("\nYou have chosen to use images as frames!")
+            if vidFile:
+                print("Please specify the path to the folder which contains the desired images.")
+                print("WARNING: Image frame file names MUST be properly ennumered and represented with an N-digit counter. For example '001' or 'frame_001'.")
+                print("In the case of the former (where it's a simple counter), please make sure to add a '\\' at the end of the folder path.")
+                print("For example, if the frames were labeled as 'XXX': 'UCSD/Test/Test1/'")
+                print("In the case of the latter, where there is a string of some kind preceding the counter, you must ALSO enter the part of the string.")
+                print("For example, if the frames are labeled as 'seq_XXX', you would enter the path: 'mall_dataset/frames/seq_'")
+            else:
+                print("The same rules as with entering the path to the clip you want to analyze apply.")
+            filePath1 = input("Please enter the folder path! > ")
+            frameDigits1 = int(input("Please enter the number of digits your frame counter has. (For example, in the case of '001' it would be 3!) > "))
+            extension1 = input("Please enter the file extension! (Don't forget the '.') > ")
+        else:
+            vidFile2 = True
+            print("\nYou have chosen to use a video file!")
+            filePath1 = input("Please enter the path to the file! > ")
+
+        refF = getAvgInteractionForceSum(filePath1, extension=extension1, L=L, frameDigits=frameDigits1, vidFile=vidFile2, tau=tau)
+    else:
+        inp2 = ''
+        while inp2 != 'y' and inp2 != 'n':
+            inp2 = input("\nWould you like to manually set a treshold? [y/n] > ")
+
+        if inp2 == 'y':
+            useExistingRef = True
+            refF = float(input("Please enter the treshold! > "))
+        else:
+            useExistingRef = False
+
+    print("\nAll set!")
+    anomalyDetect(filePath, extension=extension, L=L, useExistingRef=useExistingRef, refF=refF, refScale=refScale, frameDigits=frameDigits, vidFile=vidFile, tau=tau)
