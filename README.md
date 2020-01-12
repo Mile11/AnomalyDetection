@@ -8,6 +8,9 @@ Implementacija detekcije anomalija u ponašanju veće skupine ljudi inspirirana 
 doi: 10.1109/CVPR.2009.5206641 [https://ieeexplore.ieee.org/document/5206641]
 
 ## 0. Preduvjeti za pokretanje
+
+Ako korisnik ne pokreće izvršne verzije python datoteka, korisnik će na sustavu morati imati instalirano:
+
 * Python (Verzija 3)
 * OpenCV
 * numpy
@@ -19,9 +22,11 @@ doi: 10.1109/CVPR.2009.5206641 [https://ieeexplore.ieee.org/document/5206641]
 * **testerUMN** || Služi za evaluiranje algoritma nad UMN bazi podataka. (Zahtjeva da korisnik posjeduje UMN bazu podataka.)
 * **demo.py** || Pokreće nekoliko demonstracijskih primjera algoritma. (Zahtjeva da korisnik ima i UMN i UCSD bazu!)
 
+Naravno, sve **izvršne verzije ovih programa su priložene uz gornje navedene datoteke.**
+
 ## 2. Korištenje algoritma nad proizvoljnim datotekama
 
-Korisnik može koristiti algoritam na dva načina. Prvi je da jednostavno pokrene **anomalydetection.py** iz komandne linije. Program će korisnika provesti kroz postavljanje parametara i postavljanje puta do datoteka. (Napomena: instrukcije u programu su na engleskom.) Alternativno, kornisnik može u svom vlastitom kodu *import*-ati metodu **anomalyDetect** iz module **anomalydetection** i direktno postaviti njene parametre.
+Korisnik može koristiti algoritam na dva načina. Prvi je da jednostavno pokrene **anomalydetection.exe** iz komandne linije. Program će korisnika provesti kroz postavljanje parametara i postavljanje puta do datoteka. (Napomena: instrukcije u programu su na engleskom.) Alternativno, kornisnik može u svom vlastitom kodu *import*-ati metodu **anomalyDetect** iz module **anomalydetection.py** i direktno postaviti njene parametre.
 
 Pri odabiru datoteka, korisnik može:
 * Koristiti ili videozapis ili skup slika koje predstavljaju frame-ove videozapisa
